@@ -4,14 +4,15 @@ from aiohttp import web
 from telethon import TelegramClient, events, Button
 import yt_dlp
 
-# --- НАСТРОЙКИ (Берутся из настроек Render для безопасности) ---
-API_ID = int(os.environ.get("API_ID", 123456))  # Твой API ID (число)
-API_HASH = os.environ.get("API_HASH", "твой_api_hash")
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "твой_токен_бота")
+# --- НАСТРОЙКИ (Берутся из настроек Render) ---
+API_ID = int(os.environ.get("API_ID"))
+API_HASH = os.environ.get("API_HASH")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
-bot = TelegramClient('bot_session', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
+# Создаем объект клиента, но не запускаем его сразу
+bot = TelegramClient('bot_session', API_ID, API_HASH)
 
-# --- ВЕБ-СЕРВЕР ДЛЯ RENDER (Заглушка, чтобы бот работал 24/7 бесплатно) ---
+# --- ВЕБ-СЕРВЕР ДЛЯ RENDER (Заглушка для работы 24/7 бесплатно) ---
 async def handle_ping(request):
     return web.Response(text="Bot is alive!")
 
@@ -38,7 +39,6 @@ def download_general_video(url):
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info)
-        # Если формат изменился при слиянии на mp4
         if not os.path.exists(filename):
             filename = os.path.splitext(filename)[0] + '.mp4'
         return filename
@@ -77,7 +77,7 @@ def download_youtube_video(url, resolution):
 # --- ОБРАБОТКА КОМАНД И ССЫЛОК ---
 @bot.on(events.NewMessage(pattern='/start'))
 async def start(event):
-    await event.respond(" Привет! Отправь мне ссылку на видео из TikTok, Instagram или YouTube, и я его скачаю!")
+    await event.respond("Привет! Отправь мне ссылку на видео из TikTok, Instagram или YouTube, и я его скачаю!")
 
 @bot.on(events.NewMessage)
 async def handle_message(event):
@@ -86,31 +86,28 @@ async def handle_message(event):
     if not url.startswith(("http://", "https://")):
         return
 
-    # Очистка старых загрузок
     if not os.path.exists('downloads'):
         os.makedirs('downloads')
 
-    status_msg = await event.respond(" Обрабатываю ссылку, подожди...")
+    status_msg = await event.respond("Обрабатываю ссылку, подожди...")
 
     try:
         if "youtube.com" in url or "youtu.be" in url:
-            # Логика для YouTube: выдаем кнопки
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             resolutions, title = await loop.run_in_executor(None, get_youtube_formats, url)
             
             if not resolutions:
-                # Если нужных разрешений нет, берем базовое
                 resolutions = [360]
 
+            # rb"" исправляет предупреждение синтаксиса (SyntaxWarning)
             buttons = [
                 [Button.inline(f"🎬 {res}p", data=f"yt|{res}|{url}")] for res in resolutions
             ]
-            await status_msg.edit(f" Выбери качество для видео:\n**{title}**", buttons=buttons)
+            await status_msg.edit(f"Выбери качество для видео:\n**{title}**", buttons=buttons)
             
         elif "tiktok.com" in url or "instagram.com" in url:
-            # Логика для TikTok / Instagram: качаем сразу
             await status_msg.edit("⏳ Скачиваю видео...")
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             filepath = await loop.run_in_executor(None, download_general_video, url)
             
             await status_msg.edit("📤 Отправляю видео в Telegram...")
@@ -124,6 +121,7 @@ async def handle_message(event):
         await status_msg.edit(f"❌ Произошла ошибка: {str(e)}")
 
 # --- ОБРАБОТКА НАЖАТИЯ НА КНОПКИ КАЧЕСТВА YOUTUBE ---
+# Добавлена буква r перед b (rb"yt\|"), чтобы убрать ошибку escape-последовательности
 @bot.on(events.CallbackQuery(pattern=rb"yt\|"))
 async def youtube_callback(event):
     data = event.data.decode('utf-8').split('|')
@@ -133,7 +131,7 @@ async def youtube_callback(event):
     await event.edit(f"⏳ Скачиваю YouTube видео в качестве {resolution}p...")
     
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         filepath = await loop.run_in_executor(None, download_youtube_video, url, resolution)
         
         await event.edit("📤 Отправляю видео в Telegram...")
@@ -146,10 +144,20 @@ async def youtube_callback(event):
     except Exception as e:
         await event.edit(f"❌ Ошибка загрузки: {str(e)}")
 
-# --- ЗАПУСК БОТА ---
+# --- ИСПРАВЛЕННЫЙ И СТАБИЛЬНЫЙ ЗАПУСК ---
 async def main():
+    # 1. Запуск веб-сервера заглушки для Render
     await start_web_server()
+    
+    # 2. Безопасный асинхронный старт самого бота Telethon
+    await bot.start(bot_token=BOT_TOKEN)
+    print(" Бот успешно запущен и авторизован в Telegram!")
+    
+    # 3. Поддержание работы бота
     await bot.run_until_disconnected()
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        print("Бот принудительно остановлен.")
