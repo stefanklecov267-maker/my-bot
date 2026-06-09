@@ -124,7 +124,7 @@ async def handle_message(event):
         await status_msg.edit(f"❌ Произошла ошибка: {str(e)}")
 
 # --- ОБРАБОТКА НАЖАТИЯ НА КНОПКИ КАЧЕСТВА YOUTUBE ---
-@bot.on(events.CallbackQuery(pattern=b"yt\|"))
+@bot.on(events.CallbackQuery(pattern=rb"yt\|"))
 async def youtube_callback(event):
     data = event.data.decode('utf-8').split('|')
     resolution = data[1]
